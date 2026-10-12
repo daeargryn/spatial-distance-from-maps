@@ -3,7 +3,7 @@ import argparse
 import sys
 from pathlib import Path
 import pandas as pd
-from geopy.geocoders import Nominatim
+from geopy.geocoders import Nominatim, Photon
 from geopy.extra.rate_limiter import RateLimiter
 
 
@@ -61,6 +61,7 @@ def extract_postcode(location) -> str | None:
         return None
     address = location.raw.get("address", {})
     return address.get("postcode")
+    # return location.raw.get("postcode")
 
 
 def main() -> None:
@@ -87,7 +88,7 @@ def main() -> None:
             sys.exit(1)
 
     # 2. Configurazione Nominatim e RateLimiter
-    geolocator = Nominatim(user_agent="cap_batch_processor_app")
+    geolocator = Photon(user_agent="fuzzy")
     geocode = RateLimiter(
         geolocator.geocode,
         min_delay_seconds=1.0,
@@ -113,10 +114,17 @@ def main() -> None:
             continue
         
         # addressdetails=True restituisce la suddivisione amministrativa comprensiva del postcode
-        loc_res = geocode(q, addressdetails=True, timeout=10)
-        cap = extract_postcode(loc_res)
+        loc_res = geocode(q, timeout=10)
+        # input(loc_res.raw.get("properties").get("postcode"))
+        # cap = extract_postcode(loc_res)
+        cap = loc_res.raw.get("properties").get("postcode")
         postcodes.append(cap)
-        print(f"[{idx}/{len(queries)}] '{q}' -> CAP: {cap if cap else 'Non trovato'}")
+        # print(f"[{idx}/{len(queries)}] '{q}' -> CAP: {cap if cap else 'Non trovato'}, ACT: {df["cap"][idx-1]}")
+        if cap is None:
+            print("Cap non trovato per", q)
+        if int(cap) != int(df["cap"][idx-1]):
+            print("CAP diversi", f"comp: {cap}, act:{df["cap"][idx-1]}")
+            print(df["location"][idx-1])
 
     # 4. Formattazione e salvataggio output
     if args.full:
