@@ -29,7 +29,7 @@ import time
 from geopy.geocoders import Photon
 
 # Drop-in replacement for Nominatim
-geolocator = Photon(user_agent="fuzzy_matcher")
+# geolocator = Photon(user_agent="fuzzy_matcher")
 
 addresses = [
 #     # "Piazza dei Bruzi 1, Cosenza, Italy",
@@ -40,10 +40,12 @@ addresses = [
 
 
 import time
-from geopy.geocoders import Photon
+from geopy.geocoders import ArcGIS, Photon, Nominatim
 from geopy.exc import GeocoderTimedOut, GeocoderUnavailable
 
-geolocator = Photon(user_agent="my_distance_app", timeout=10)
+# geolocator = Photon(user_agent="my_distance_app", timeout=10)
+# geolocator = Photon(user_agent="fuzzy_matcher", timeout=10)
+geolocator = Photon(timeout=10)
 
 def safe_geocode(query, max_retries=3, delay=1.5):
     for attempt in range(1, max_retries + 1):
@@ -55,8 +57,9 @@ def safe_geocode(query, max_retries=3, delay=1.5):
                 return None
             time.sleep(delay)
 
-# loc = safe_geocode("Via Don Carlo De Cardona 5, Mirto Crosia, Calabria, Italy")
-loc = safe_geocode("Piretto, Lattarico, Calabria, Italy", 100, 0.1)
+# loc = safe_geocode("Bcc, Viale Mancini Pal. Polillo,  87100 Cosenza, CS, Italia")
+loc = safe_geocode("Bcc, C.da Piretto, Lattarico 87010, CS, Italia", 10, 0.1)
+# loc = safe_geocode("Bcc, Acri 87041, CS, Italia", 10, 0.1)
 if loc:
     print(loc)
     print(loc.latitude, loc.longitude)
@@ -64,6 +67,39 @@ else:
     print("Not available")
 
 
+def get_cap(query: str, user_agent: str = "cap_finder_app") -> str | None:
+    """
+    Recupera il CAP per un indirizzo o una località usando Nominatim.
+    
+    :param query: Indirizzo o località (es. 'Piazza Maggiore, Bologna' o 'Roma, Italia')
+    :param user_agent: Identificativo univoco richiesto dalla policy di OpenStreetMap
+    :return: Stringa con il CAP se trovato, altrimenti None
+    """
+    geolocator = Nominatim(user_agent=user_agent)
+    
+    # Riprova fino a 2 volte in caso di timeout o micro-disconnessioni
+    for attempt in range(2):
+        try:
+            # addressdetails=True forza la restituzione dell'albero dei dettagli amministrativi
+            location = geolocator.geocode(query, addressdetails=True, timeout=10)
+            
+            if not location or not location.raw:
+                return None
+            
+            address = location.raw.get("address", {})
+            return address.get("postcode")
+            
+        except (GeocoderTimedOut, GeocoderUnavailable):
+            if attempt < 1:
+                time.sleep(1.0)
+                continue
+            return None
+            
+    return None
+
+query = " S. Demetrio Co., Cosenza CS "
+cap = get_cap(query=query)
+print(f"The CAP for query <{query}> is {cap}.")
 input()
 
 # addresses = [
