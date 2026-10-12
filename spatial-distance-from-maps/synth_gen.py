@@ -1,136 +1,250 @@
 #!/usr/bin/env python3
 import argparse
+import random
 import sys
 from pathlib import Path
 import pandas as pd
-from geopy.geocoders import Nominatim
-from geopy.extra.rate_limiter import RateLimiter
+import requests
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Recupera il CAP per una lista di località tramite OpenStreetMap Nominatim."
+        description="Genera un CSV sintetico con indirizzi e coordinate reali entro un raggio da una città."
     )
     parser.add_argument(
-        "input_path",
-        type=Path,
-        help="Percorso del file di input (CSV o Excel)."
+        "--city",
+        type=str,
+        default="Roma",
+        help="Città di riferimento (default: 'Roma')."
     )
     parser.add_argument(
-        "--excel",
-        action="store_true",
-        help="Specifica se il file di input è in formato Excel anziché CSV."
+        "--rows",
+        type=int,
+        default=1000,
+        help="Numero di righe/indirizzi sintetici da generare (default: 1000)."
     )
     parser.add_argument(
-        "--id-col",
-        required=True,
-        help="Nome della colonna contenente l'identificativo univoco."
-    )
-    parser.add_argument(
-        "--loc-col",
-        required=True,
-        help="Nome della colonna contenente il luogo/indirizzo da geocodificare."
-    )
-    parser.add_argument(
-        "--pre",
-        default="",
-        help="Testo facoltativo da anteporre a ciascuna località (es. 'Via ')."
-    )
-    parser.add_argument(
-        "--suff",
-        default="",
-        help="Testo facoltativo da posporre a ciascuna località (es. ', Italia')."
-    )
-    parser.add_argument(
-        "--full",
-        action="store_true",
-        help="Se specificato, esporta tutte le colonne originali più la colonna 'CAP'."
+        "--radius-km",
+        type=float,
+        default=10.0,
+        help="Raggio di ricerca in km attorno al centro della città (default: 10.0)."
     )
     parser.add_argument(
         "-o", "--output",
         type=Path,
-        default=Path.cwd() / "cap.csv",
-        help="Percorso del file CSV di output (default: 'cap.csv' nella directory corrente)."
+        default=None,
+        help="Percorso file CSV di output (default: 'synthetic_addresses_<citta>.csv')."
     )
     return parser.parse_args()
 
 
-def extract_postcode(location) -> str | None:
-    """Estrae il CAP dal campo raw di geopy se presente."""
-    if not location or not getattr(location, "raw", None):
-        return None
-    address = location.raw.get("address", {})
-    return address.get("postcode")
+# def get_city_center(city: str) -> tuple[float, float]:
+#     """Recupera le coordinate del centro città tramite Nominatim."""
+#     url = "https://nominatim.openstreetmap.org/search"
+#     params = {"q": city, "format": "json", "limit": 1}
+#     headers = {"User-Agent": "synthetic_generator/2.0"}
 
+#     try:
+#         res = requests.get(url, params=params, headers=headers, timeout=10)
+#         res.raise_for_status()
+#         data = res.json()
+#         if not data:
+#             print(f"Errore: coordinate non trovate per la città '{city}'.", file=sys.stderr)
+#             sys.exit(1)
+#         return float(data[0]["lat"]), float(data[0]["lon"])
+#     except Exception as e:
+#         print(f"Errore nel geocoding della città: {e}", file=sys.stderr)
+#         sys.exit(1)
+
+def get_city_center_and_cap(city: str) -> tuple[float, float, str]:
+    """Recupera coordinate e CAP predefinito della città tramite Nominatim."""
+    url = "https://nominatim.openstreetmap.org/search"
+    params = {"q": city, "format": "json", "addressdetails": 1, "limit": 1}
+    headers = {"User-Agent": "synthetic_generator/2.1"}
+
+    try:
+        res = requests.get(url, params=params, headers=headers, timeout=10)
+        res.raise_for_status()
+        data = res.json()
+        if not data:
+            print(f"Errore: città '{city}' non trovata.", file=sys.stderr)
+            sys.exit(1)
+            
+        lat = float(data[0]["lat"])
+        lon = float(data[0]["lon"])
+        fallback_cap = data[0].get("address", {}).get("postcode", "")
+        return lat, lon, fallback_cap
+    except Exception as e:
+        print(f"Errore nel geocoding della città: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+# def fetch_real_addresses(lat: float, lon: float, radius_km: float) -> list[dict]:
+#     """Estrae indirizzi completi reali (via, civico, coordinate) con Overpass API."""
+#     radius_meters = int(radius_km * 1000)
+#     overpass_url = "https://overpass-api.de/api/interpreter"
+
+#     # Cerca elementi dotati sia di strada che di numero civico
+#     query = f"""
+#     [out:json][timeout:60];
+#     (
+#       node["addr:street"]["addr:housenumber"](around:{radius_meters},{lat},{lon});
+#       way["addr:street"]["addr:housenumber"](around:{radius_meters},{lat},{lon});
+#     );
+#     out center 3000;
+#     """
+
+#     headers = {"User-Agent": "synthetic_generator/2.0"}
+#     print(f"Interrogazione OSM Overpass nel raggio di {radius_km} km...")
+
+#     try:
+#         res = requests.post(overpass_url, data={"data": query}, headers=headers, timeout=65)
+#         res.raise_for_status()
+#         elements = res.json().get("elements", [])
+#     except Exception as e:
+#         print(f"Errore durante l'interrogazione Overpass: {e}", file=sys.stderr)
+#         sys.exit(1)
+
+#     addresses = []
+#     for el in elements:
+#         tags = el.get("tags", {})
+#         street = tags.get("addr:street")
+#         housenumber = tags.get("addr:housenumber")
+#         postcode = tags.get("addr:postcode", "")
+#         city_name = tags.get("addr:city", "")
+
+#         # Coordinate: 'center' per i way, 'lat'/'lon' per i node
+#         c_lat = el.get("lat") or el.get("center", {}).get("lat")
+#         c_lon = el.get("lon") or el.get("center", {}).get("lon")
+
+#         if street and housenumber and c_lat and c_lon:
+#             addresses.append({
+#                 "street": f"{street} {housenumber}",
+#                 "postcode": postcode,
+#                 "city": city_name,
+#                 "latitude": c_lat,
+#                 "longitude": c_lon
+#             })
+
+#     return addresses
+
+OVERPASS_ENDPOINTS = [
+    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass-api.de/api/interpreter",
+]
+
+
+def fetch_real_addresses(lat: float, lon: float, radius_km: float, out=2000) -> list[dict]:
+    """Estrae indirizzi civici reali ottimizzando la query e gestendo mirror di fallback."""
+    radius_meters = int(radius_km * 1000)
+
+    # Query ottimizzata: cerca solo elementi che hanno esplicitamente sia via che civico,
+    # impostando un limite di estrazione (es. 2500) per evitare scansioni esaustive pesanti.
+    query = f"""
+    [out:json][timeout:120];
+    (
+      node["addr:street"]["addr:housenumber"](around:{radius_meters},{lat},{lon});
+    );
+    out {out};
+    """
+
+    headers = {"User-Agent": "synthetic_generator_fast/3.0"}
+
+    for endpoint in OVERPASS_ENDPOINTS:
+        print(f"Tentativo interrogazione Overpass su {endpoint}...")
+        try:
+            res = requests.post(
+                endpoint,
+                data={"data": query},
+                headers=headers,
+                timeout=60
+            )
+            res.raise_for_status()
+            elements = res.json().get("elements", [])
+
+            addresses = []
+            for el in elements:
+                tags = el.get("tags", {})
+                street = tags.get("addr:street")
+                housenumber = tags.get("addr:housenumber")
+                c_lat = el.get("lat")
+                c_lon = el.get("lon")
+
+                if street and housenumber and c_lat and c_lon:
+                    addresses.append({
+                        "street": f"{street} {housenumber}",
+                        "postcode": tags.get("addr:postcode", None),
+                        "city": tags.get("addr:city", ""),
+                        "latitude": c_lat,
+                        "longitude": c_lon,
+                    })
+
+            if addresses:
+                return addresses
+
+        except requests.RequestException as e:
+            print(f"Server {endpoint} non disponibile o in timeout ({e}). Provo il successivo...")
+
+    print("Errore: tutti i server Overpass hanno risposto con timeout o errore.", file=sys.stderr)
+    sys.exit(1)
 
 def main() -> None:
     args = parse_args()
+    clean_city_name = args.city.lower().replace(" ", "_")
+    output_path = args.output or Path.cwd() / f"synthetic_addresses_{clean_city_name}.csv"
 
-    if not args.input_path.is_file():
-        print(f"Errore: il file di input '{args.input_path}' non esiste.", file=sys.stderr)
+    # 1. Recupero centroide
+    lat, lon, fallback_cap = get_city_center_and_cap(args.city)
+    print(f"Centro città '{args.city}' individuato: {lat:.5f}, {lon:.5f}")
+
+    # 2. Download indirizzi reali nel raggio
+    pool = fetch_real_addresses(lat, lon, args.radius_km, int(args.rows * 10))
+    if not pool:
+        print(f"Nessun indirizzo completo trovato entro {args.radius_km} km. Prova ad aumentare il raggio.", file=sys.stderr)
         sys.exit(1)
 
-    # 1. Caricamento del dataset
-    try:
-        if args.excel:
-            df = pd.read_excel(args.input_path)
-        else:
-            df = pd.read_csv(args.input_path)
-    except Exception as e:
-        print(f"Errore durante la lettura del file: {e}", file=sys.stderr)
-        sys.exit(1)
+    print(f"Trovati {len(pool)} indirizzi reali univoci nel raggio.")
 
-    # Verifica colonne richieste
-    for col in (args.id_col, args.loc_col):
-        if col not in df.columns:
-            print(f"Errore: la colonna '{col}' non è presente nel file di input.", file=sys.stderr)
-            sys.exit(1)
+    # 3. Campionamento con rimpiazzo per raggiungere il totale righe
+    print(f"Generazione di {args.rows} record...")
+    for item in pool:
+        if item["city"] and item["postcode"] is None:
+            pool.remove(item)
+    selected_samples = random.choices(pool, k=args.rows)
 
-    # 2. Configurazione Nominatim e RateLimiter
-    geolocator = Nominatim(user_agent="cap_batch_processor_app")
-    geocode = RateLimiter(
-        geolocator.geocode,
-        min_delay_seconds=1.0,
-        max_retries=2,
-        error_wait_seconds=1.0,
-        return_value_on_exception=None,
-    )
-
-    # 3. Preparazione query e geocodifica
-    pre = f"{args.pre.strip()} " if args.pre.strip() else ""
-    suff = f" {args.suff.strip()}" if args.suff.strip() else ""
-
-    queries = df[args.loc_col].fillna("").astype(str).apply(
-        lambda loc: f"{pre}{loc}{suff}".strip() if loc.strip() else ""
-    )
-
-    print(f"Avvio geocodifica di {len(df)} record...")
-    
-    postcodes = []
-    for idx, q in enumerate(queries, 1):
-        if not q:
-            postcodes.append(None)
-            continue
-        
-        # addressdetails=True restituisce la suddivisione amministrativa comprensiva del postcode
-        loc_res = geocode(q, addressdetails=True, timeout=10)
-        cap = extract_postcode(loc_res)
-        postcodes.append(cap)
-        print(f"[{idx}/{len(queries)}] '{q}' -> CAP: {cap if cap else 'Non trovato'}")
-
-    # 4. Formattazione e salvataggio output
-    if args.full:
-        df["CAP"] = postcodes
-        out_df = df
-    else:
-        out_df = pd.DataFrame({
-            args.id_col: df[args.id_col],
-            "CAP": postcodes
+    records = []
+    for i, item in enumerate(selected_samples, 1):
+        if not item["city"]:
+            city_label = item["city"] if item["city"] else args.city
+        # Durante la generazione dei record:
+            cap_effettivo = item["postcode"] if item["postcode"] else fallback_cap
+        records.append({
+            "id": f"LOC_{i:06d}",
+            # "location": f"{item['street']}, {city_label}",
+            "location": f"{city_label}",
+            "street": item["street"],
+            "cap": cap_effettivo,  # Non sarà più NaN
+            "city": city_label,
+            "latitude": item["latitude"],
+            "longitude": item["longitude"]
         })
+        # records.append({
+        #     "id": f"LOC_{i:06d}",
+        #     # "location": f"{item['street']}, {city_label}",
+        #     "location": f"{city_label}",
+        #     "street": item["street"],
+        #     "cap": item["postcode"],
+        #     "city": city_label,
+        #     "latitude": item["latitude"],
+        #     "longitude": item["longitude"]
+        # })
 
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    out_df.to_csv(args.output, index=False, encoding="utf-8")
-    print(f"\nSalvataggio completato con successo in: {args.output.resolve()}")
+    # 4. Esportazione CSV
+    df = pd.DataFrame(records)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(output_path, index=False, encoding="utf-8")
+    print(f"File generato con successo: {output_path.resolve()}")
 
 
 if __name__ == "__main__":
