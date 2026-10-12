@@ -1,15 +1,34 @@
 import requests
 
-def get_driving_distance_osrm(lon1, lat1, lon2, lat2):
-    url = f"http://router.project-osrm.org/route/v1/driving/{lon1},{lat1};{lon2},{lat2}?overview=false"
+# def get_driving_distance_osrm(lon1, lat1, lon2, lat2):
+#     url = f"http://router.project-osrm.org/route/v1/driving/{lon1},{lat1};{lon2},{lat2}?overview=false"
+#     res = requests.get(url).json()
+    
+#     if res.get("code") == "Ok":
+#         meters = res["routes"][0]["distance"]
+#         seconds = res["routes"][0]["duration"]
+#         return {
+#             "distance_km": round(meters / 1000, 2),
+#             "duration_min": round(seconds / 60, 1)
+#         }
+#     return None
+
+
+def get_shortest_driving_distance_osrm(lon1, lat1, lon2, lat2, alternatives=3):
+    # Request up to 3 alternative routes
+    url = (
+        f"http://router.project-osrm.org/route/v1/driving/{lon1},{lat1};{lon2},{lat2}"
+        f"?overview=false&alternatives={alternatives}"
+    )
     res = requests.get(url).json()
     
-    if res.get("code") == "Ok":
-        meters = res["routes"][0]["distance"]
-        seconds = res["routes"][0]["duration"]
+    if res.get("code") == "Ok" and res.get("routes"):
+        # Find the route with the minimum distance
+        shortest_route = min(res["routes"], key=lambda r: r["distance"])
+        
         return {
-            "distance_km": round(meters / 1000, 2),
-            "duration_min": round(seconds / 60, 1)
+            "distance_km": round(shortest_route["distance"] / 1000, 2),
+            "duration_min": round(shortest_route["duration"] / 60, 1)
         }
     return None
 
@@ -57,14 +76,7 @@ def safe_geocode(query, max_retries=3, delay=1.5):
                 return None
             time.sleep(delay)
 
-# loc = safe_geocode("Bcc, Viale Mancini Pal. Polillo,  87100 Cosenza, CS, Italia")
-loc = safe_geocode("Bcc, C.da Piretto, Lattarico 87010, CS, Italia", 10, 0.1)
-# loc = safe_geocode("Bcc, Acri 87041, CS, Italia", 10, 0.1)
-if loc:
-    print(loc)
-    print(loc.latitude, loc.longitude)
-else:
-    print("Not available")
+
 
 
 def get_cap(query: str, user_agent: str = "cap_finder_app") -> str | None:
@@ -110,12 +122,66 @@ input()
 #       }  
 # ]
 
+import os
+import requests
+
+with open("gh_api.txt") as f:
+    api_key = f.readline()
+
+def get_shortest_driving_distance_gh(
+    lon1: float,
+    lat1: float,
+    lon2: float,
+    lat2: float,
+    api_key: str,
+) -> dict | None:
+    url = "https://graphhopper.com/api/1/route"
+    
+    # Clean the key to avoid trailing spaces / newline issues
+    clean_key = api_key.strip()
+
+    # Minimal payload using the standard profile
+    payload = {
+        "profile": "car",
+        "points": [
+            [float(lon1), float(lat1)],
+            [float(lon2), float(lat2)]
+        ],
+        "points_encoded": False,
+        "instructions": False,
+        "elevation": False
+    }
+
+    params = {"key": clean_key}
+
+    res = requests.post(url, json=payload, params=params, timeout=10)
+
+    # If it fails, print GraphHopper's explicit diagnostic payload
+    if not res.ok:
+        try:
+            err_json = res.json()
+            print("GraphHopper API Error Details:", err_json)
+        except Exception:
+            print("GraphHopper Raw Response:", res.text)
+        return None
+
+    data = res.json()
+    paths = data.get("paths", [])
+    if paths:
+        route = paths[0]
+        return {
+            "distance_km": round(route["distance"] / 1000.0, 2),
+            "duration_min": round(route["time"] / (1000.0 * 60.0), 1)
+        }
+
+    return None
+
 coordinates = []
 
 for address in addresses:
     try:
         # Fetch the location
-        location = geolocator.geocode(address, exactly_one=False)
+        location = geolocator.geocode(address, exactly_one=True)
         print(*[f"{x}\n" for x in location])
         input()
         
@@ -139,5 +205,8 @@ for i, (lat1, long1) in enumerate(coordinates):
     for j, (lat2, long2) in enumerate(coordinates):
         if i == j:
             continue
-        dist = get_driving_distance_osrm(lon1=long1, lat1=lat1, lon2=long2, lat2=lat2)
-        print(addresses[i], "--->", addresses[j], "km:", dist["distance_km"])
+        dist = "NOPE"
+        dist = get_shortest_driving_distance_osrm(lon1=long1, lat1=lat1, lon2=long2, lat2=lat2)
+        dist2 = get_shortest_driving_distance_gh(lon1=long1, lat1=lat1, lon2=long2, lat2=lat2, api_key=api_key)
+        print(addresses[i], "--->", addresses[j])
+        print("km:", dist["distance_km"], dist2)
