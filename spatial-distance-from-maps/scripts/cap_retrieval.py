@@ -76,7 +76,7 @@ def main() -> None:
         if args.excel:
             df = pd.read_excel(args.input_path)
         else:
-            df = pd.read_csv(args.input_path)
+            df = pd.read_csv(args.input_path, delimiter=";")
     except Exception as e:
         print(f"Errore durante la lettura del file: {e}", file=sys.stderr)
         sys.exit(1)
@@ -91,9 +91,9 @@ def main() -> None:
     geolocator = Photon(user_agent="fuzzy")
     geocode = RateLimiter(
         geolocator.geocode,
-        min_delay_seconds=1.0,
+        min_delay_seconds=1.1,
         max_retries=2,
-        error_wait_seconds=1.0,
+        error_wait_seconds=1.1,
         return_value_on_exception=None,
     )
 
@@ -108,13 +108,14 @@ def main() -> None:
     print(f"Avvio geocodifica di {len(df)} record...")
     
     postcodes = []
-    for idx, q in enumerate(queries, 1):
+    from tqdm import tqdm
+    for idx, q in tqdm(enumerate(queries, 1), total = len(queries)):
         if not q:
             postcodes.append(None)
             continue
         
         # addressdetails=True restituisce la suddivisione amministrativa comprensiva del postcode
-        loc_res = geocode(q, timeout=10)
+        loc_res = geocode(q, timeout=None)
         # input(loc_res.raw.get("properties").get("postcode"))
         # cap = extract_postcode(loc_res)
         cap = loc_res.raw.get("properties").get("postcode")
@@ -122,18 +123,16 @@ def main() -> None:
         # print(f"[{idx}/{len(queries)}] '{q}' -> CAP: {cap if cap else 'Non trovato'}, ACT: {df["cap"][idx-1]}")
         if cap is None:
             print("Cap non trovato per", q)
-        if int(cap) != int(df["cap"][idx-1]):
-            print("CAP diversi", f"comp: {cap}, act:{df["cap"][idx-1]}")
-            print(df["location"][idx-1])
+
 
     # 4. Formattazione e salvataggio output
     if args.full:
-        df["CAP"] = postcodes
+        df["cap"] = postcodes
         out_df = df
     else:
         out_df = pd.DataFrame({
             args.id_col: df[args.id_col],
-            "CAP": postcodes
+            "cap": postcodes
         })
 
     args.output.parent.mkdir(parents=True, exist_ok=True)

@@ -3,7 +3,7 @@ import argparse
 import sys
 from pathlib import Path
 import pandas as pd
-from geopy.geocoders import Photon
+from geopy.geocoders import Photon, Nominatim, ArcGIS
 from geopy.extra.rate_limiter import RateLimiter
 
 
@@ -82,7 +82,10 @@ def build_query(row: pd.Series, street_col: str, cap_col: str, loc_col: str, pre
     parts = []
     
     for col in (street_col, cap_col, loc_col):
-        val = str(row[col]).strip() if pd.notna(row[col]) else ""
+        raw_val = row[col]
+        if col == "cap":
+            raw_val = int(raw_val)
+        val = str(raw_val).strip() if pd.notna(row[col]) else ""
         if val and val.lower() != "nan":
             parts.append(val)
             
@@ -121,7 +124,7 @@ def main() -> None:
         sys.exit(1)
 
     # 2. Configurazione Photon e RateLimiter
-    geolocator = Photon(timeout=10)
+    geolocator = ArcGIS(timeout=10, user_agent="fuzzy")
     geocode = RateLimiter(
         geolocator.geocode,
         min_delay_seconds=args.delay,
@@ -152,7 +155,7 @@ def main() -> None:
             full_addresses.append(location.address)
             latitudes.append(location.latitude)
             longitudes.append(location.longitude)
-            status = f"Trovato: {location.latitude:.5f}, {location.longitude:.5f}"
+            status = f"Trovato: {location.latitude:.5f}, {location.longitude:.5f}\n{location}"
         else:
             full_addresses.append(None)
             latitudes.append(None)
